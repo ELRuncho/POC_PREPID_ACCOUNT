@@ -1,0 +1,217 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template for Sandbox Account
+
+Parameters:
+  DaysForAccount:
+    Type: Number
+    Description: "Initial amount of days until cleanup of resources."
+    Default: "5"
+
+  AccountIdSandbox:
+    Type: String
+    Description: "Account ID of a regular account that will be converted into an experimentation account."
+    AllowedPattern: ".+"
+    ConstraintDescription: "Provide the account id. Hint: Account ID have 12 digits"
+
+  StackRegion:
+    Description: "Region where it will create the controls inside of the new experimentation account. Recommendation is to use us-east-1 for cost optimisation."
+    Default: "us-east-1"
+    Type: String
+    AllowedPattern: ".+"
+    AllowedValues: ["us-east-1","sa-east-1"]
+    ConstraintDescription: "Must be a valid AWS region"
+
+  AddrEmail:
+    Type: String
+    Description: "Email address that will receive all notifications."
+    AllowedPattern: ".+"
+    ConstraintDescription: "Must provide a valid email address."
+
+  BudgetName:
+    Type: String
+    Description: "Name of the new Budget created to help control costs."
+    AllowedPattern: ".+"
+    ConstraintDescription: "Must provide a valid email address"
+
+  BudgetAmount:
+    Type: Number
+    Description: "Please choose an amount in USD for the Budget that will be created for this experimentation account. You will receive an email when your cost reaches 90% of this budget."
+    Default: 150
+  
+  IncreaseLimitEC2:
+    Type: Number
+    Description: "New maximum amount of vCPUs assigned to the Running On-Demand Standard (A, C, D, H, I, M, R, T, Z) instances. Default to new account is 5."
+    Default: 0
+
+Metadata: 
+  AWS::CloudFormation::Interface:
+    ParameterGroups: 
+      - 
+        Label: 
+          default: "Notifications"
+        Parameters: 
+          - AddrEmail
+      - 
+        Label: 
+          default: "AWS Budgets"
+        Parameters: 
+          - BudgetName
+          - BudgetAmount
+      - 
+        Label: 
+          default: "Parameters for AWS Account Sandbox"
+        Parameters:
+          - AccountIdSandbox
+          - DaysForAccount
+          - IncreaseLimitEC2
+          - StackRegion
+    ParameterLabels: 
+      AddrEmail:
+        default: "Email address:"
+      BudgetName:
+        default: "AWS Budgets Name:" 
+      BudgetAmount:
+        default: "Budget size in USD:"
+      AccountIdSandbox:
+        default: " What is the AWS Account ID of the Sandbox Account:" 
+      DaysForAccount:
+        default: "Period in days:" 
+      IncreaseLimitEC2:
+        default: "CPU limit increase for different EC2 families:" 
+      StackRegion:
+        default: "Solution Deployment Region:" 
+
+Resources:
+#Create a Budget for this specific sandbox account and will trigger a notification when the value will greater than 89%
+  CreateSandboxBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Ref BudgetName
+        BudgetLimit: 
+          Amount: !Ref BudgetAmount
+          Unit: USD
+        TimeUnit: MONTHLY
+        BudgetType: COST
+        CostFilters:
+          LinkedAccount:
+            - !Ref AccountIdSandbox
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: PERCENTAGE
+            Threshold: 89            
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AddrEmail
+
+#Main IAM Role for Lambda
+  LambdaRole: 
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "lambda.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+      Policies:
+      - PolicyName: LambdaAccessCloudFormation
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            Effect: Allow
+            Action: 
+              - "*"
+            Resource: "*"
+  
+  AccountSandboxLambda:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Handler: "5-CustomworkingLambdaCode.main"
+      Runtime: "python3.6"
+      Role: !GetAtt LambdaRole.Arn
+      Timeout: 180
+      Code:
+        S3Bucket: masterbuilder-account-sandbox
+        S3Key: "5-CustomworkingLambdaCode.zip"
+      Environment:
+        Variables:
+          'accountemail' : !Ref AddrEmail
+          'accountid' : !Ref AccountIdSandbox
+          'stackname' : !Join ["-", ["SandboxStackSet", !Ref AccountIdSandbox]]
+          'stackregion' : !Ref StackRegion
+          'executionrole' : "AWSControlTowerExecution"
+          'administrationrole': !Join [":", ["arn:aws:iam:", !Ref "AWS::AccountId", "role/service-role/AWSControlTowerStackSetRole"]]
+          'sourcebucket' : "masterbuilder-account-sandbox"
+          'accountsandboxtemplate': "sandbox-deploy.yaml"
+          'accountdays': !Ref DaysForAccount
+          'increaseec2': !Ref IncreaseLimitEC2
+
+  TriggerLambda:
+    Type: "Custom::TriggerLambda"
+    DependsOn: 
+      - AccountSandboxLambda
+      - LambdaRole
+    Properties:
+      ServiceToken: !GetAtt AccountSandboxLambda.Arn
+
+#Lambda Function for CreateSCP - this function deny any regional services out US-EAST-1  and SA-EAST-1
+  CreateSCP:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - LambdaRole
+    Properties:
+      Code:
+        S3Bucket: masterbuilder-account-sandbox
+        S3Key: "create-scp.zip"
+      Environment:
+        Variables:
+          'accountid' : !Ref AccountIdSandbox
+      Description: "Function for Create SCP to block create new resources outside us-east-1 and sa-east-1"
+      Handler: create-scp.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      Runtime: python3.7
+      Timeout: 300
+
+  ExecuteSCPLambdaCustom:
+    Type: 'Custom::CustomResource'
+    DependsOn:
+      - CreateSCP
+    Properties:
+      ServiceToken: !GetAtt 'CreateSCP.Arn'
+      LambdaRegion: !Ref "AWS::Region"
+      LambdaName: !Ref CreateSCP
+
+#Lambda Function for CreateSCPDeploy - this function will protect the resources that will be deployed in Sandbox Account via StackSet
+  CreateSCPDeploy:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - LambdaRole
+    Properties:
+      Code:
+        S3Bucket: masterbuilder-account-sandbox
+        S3Key: "create-scp-deploy.zip"
+      Environment:
+        Variables:
+          'accountid' : !Ref AccountIdSandbox
+      Description: "Function for Create SCP to block create new resources outside us-east-1 and sa-east-1"
+      Handler: create-scp-deploy.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      Runtime: python3.7
+      Timeout: 300
+
+  ExecuteSCPDeployLambdaCustom:
+    Type: 'Custom::CustomResource'
+    DependsOn:
+      - CreateSCPDeploy
+      - ExecuteSCPLambdaCustom
+    Properties:
+      ServiceToken: !GetAtt 'CreateSCPDeploy.Arn'
+      LambdaRegion: !Ref "AWS::Region"
+      LambdaName: !Ref CreateSCPDeploy

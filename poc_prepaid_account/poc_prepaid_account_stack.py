@@ -22,8 +22,8 @@ class PocPrepaidAccountStack(cdk.Stack):
         )
 
         artifactsparam = servicecatalog.CfnCloudFormationProduct.ProvisioningArtifactPropertiesProperty(info={
-                                                                                                                            "LoadTemplateFromUrl":"https://raw.githubusercontent.com/matheuslra/aws-sandbox-account/master/sandbox-start.yaml"
-                                                                                                                        },
+                                                                                                                "LoadTemplateFromURL":"https://raw.githubusercontent.com/matheuslra/aws-sandbox-account/master/sandbox-start.yaml"
+                                                                                                              },
                                                                                                                     name="June 2021" ,
                                                                                                                     description="June 2021"
                                                                                                                 )
@@ -34,6 +34,11 @@ class PocPrepaidAccountStack(cdk.Stack):
             support_email="support@yourcompany.com",
             support_url="https://www.amazon.com",
             provisioning_artifact_parameters=[artifactsparam]
+        )
+
+        servicecatalog.CfnPortfolioProductAssociation(self, "sandboxassociation",
+                    product_id= cfnProduct.ref ,
+                    portfolio_id= portfolio.portfolio_id
         )
 
 
