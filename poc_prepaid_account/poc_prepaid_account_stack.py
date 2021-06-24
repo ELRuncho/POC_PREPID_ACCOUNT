@@ -22,7 +22,7 @@ class PocPrepaidAccountStack(cdk.Stack):
         )
 
         artifactsparam = servicecatalog.CfnCloudFormationProduct.ProvisioningArtifactPropertiesProperty(info={
-                                                                                                                "LoadTemplateFromURL":"https://raw.githubusercontent.com/matheuslra/aws-sandbox-account/master/sandbox-start.yaml"
+                                                                                                                "LoadTemplateFromURL":"https://raw.githubusercontent.com/ELRuncho/POC_PREPID_ACCOUNT/main/sanbox-start.yaml"
                                                                                                               },
                                                                                                                     name="June 2021" ,
                                                                                                                     description="June 2021"
