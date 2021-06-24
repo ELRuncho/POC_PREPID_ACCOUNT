@@ -215,3 +215,21 @@ Resources:
       ServiceToken: !GetAtt 'CreateSCPDeploy.Arn'
       LambdaRegion: !Ref "AWS::Region"
       LambdaName: !Ref CreateSCPDeploy
+Outputs:
+  Budget:
+    Description: budget value
+    Value: !Ref BudgetAmount
+    Export:
+      Name: BudgetAmount
+
+  Customer:
+    Description: client Name
+    Value: !Ref AddrEmail
+    Export:
+      Name: Customer
+
+  Duration:
+    Description: Duration of POC
+    Value: !Ref DaysForAccount
+    Export:
+      Name: Duration
